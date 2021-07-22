@@ -122,6 +122,7 @@ class _Namespace:
 
         # delete all characters that are illegal in a Python identifier
         candidate = self._illegal_char_regex.sub('_', candidate)
+
         if candidate[0].isdigit():
             candidate = f'_{candidate}'
 
@@ -319,7 +320,7 @@ class Graph:
         """
         return _node_list(self)
 
-    def graph_copy(self, g : 'Graph', val_map : Dict[Node, Node]) -> 'Optional[Argument]':
+    def graph_copy(self, g : 'Graph', val_map : Dict[Node, Node], return_output_node=False) -> 'Optional[Argument]':
         """
         Copy all nodes from a given graph into ``self``.
 
@@ -341,7 +342,7 @@ class Graph:
                 continue
             if node.op == 'output':
                 rv = map_arg(node.args[0], lambda n: val_map[n])
-                return rv
+                return rv if not return_output_node else (rv, node)
             val_map[node] = self.node_copy(node, lambda n : val_map[n])
         return None
 
@@ -355,8 +356,10 @@ class Graph:
         """
         memo = memo if memo else {}
         g = Graph()
-        output_val = g.graph_copy(self, val_map=memo)
-        g.output(output_val)
+        output_vals = g.graph_copy(self, val_map=memo, return_output_node=True)
+        assert isinstance(output_vals, tuple)
+        output_val, old_output_val = output_vals
+        g.output(output_val, type_expr=getattr(old_output_val, 'type', None))
         return g
 
     def create_node(self, op: str, target: 'Target',
@@ -602,7 +605,7 @@ class Graph:
             as :meth:`Graph.create_node`.
         """
         if (self.owning_module and
-                self.owning_module.get_submodule(module_name) is not None):
+                self.owning_module.get_submodule(module_name) is None):
             warnings.warn("Attempted to insert a call_module Node with "
                           "no underlying reference in the owning "
                           "GraphModule! Call "
@@ -826,6 +829,7 @@ class Graph:
 
             # normalize the name hint to get a proper identifier
             global_name = namespace.create_name(name_hint, obj)
+
             if global_name in globals_:
                 assert globals_[global_name] is obj
                 return global_name
@@ -837,6 +841,10 @@ class Graph:
             add_global(name, obj)
 
         def type_repr(o : Any):
+            if o == ():
+                # Empty tuple is used for empty tuple type annotation Tuple[()]
+                return '()'
+
             typename = _type_repr(o)
 
             # This is a generic type, e.g. typing.List[torch.Tensor]
@@ -846,6 +854,7 @@ class Graph:
 
                 # Assign global names for each of the inner type variables.
                 args = [type_repr(arg) for arg in o.__args__]
+
                 return f'{origin_typename}[{",".join(args)}]'
 
             # Common case: this is a regular module name like 'foo.bar.baz'
